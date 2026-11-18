@@ -8,6 +8,7 @@ const DEFAULT_EXCHANGE_URL = 'https://dashboard.algolia.com/api/1/vercel/credent
 const EXCHANGE_URL_ENV_VAR = 'ALGOLIA_VERCEL_CREDENTIALS_URL';
 const DEFAULT_REFRESH_MARGIN_SECONDS = 30;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_MAX_RETRIES = 2;
 
 export interface ProviderConfig {
@@ -30,7 +31,7 @@ export function resolveConfig(options: AlgoliaCredentialsProviderOptions): Provi
     resource: validResource(options.resource),
     exchangeUrl: resolveExchangeUrl(),
     refreshMarginMs: nonNegativeNumber(options.refreshMarginSeconds ?? DEFAULT_REFRESH_MARGIN_SECONDS, 'refreshMarginSeconds') * 1000,
-    timeoutMs: positiveInteger(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 'timeoutMs'),
+    timeoutMs: timerDelay(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 'timeoutMs'),
     maxRetries: nonNegativeInteger(options.maxRetries ?? DEFAULT_MAX_RETRIES, 'maxRetries'),
     getIntegrationToken: optionalFunction(options.getIntegrationToken, 'getIntegrationToken') ?? defaultGetIntegrationToken,
     fetch: optionalFunction(options.fetch, 'fetch') ?? defaultFetch,
@@ -74,9 +75,9 @@ function nonNegativeNumber(value: unknown, name: string): number {
   return value;
 }
 
-function positiveInteger(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
-    throw new CredentialsConfigurationError(`${name} must be an integer > 0`);
+function timerDelay(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > MAX_TIMEOUT_MS) {
+    throw new CredentialsConfigurationError(`${name} must be an integer between 1 and ${MAX_TIMEOUT_MS}`);
   }
   return value as number;
 }

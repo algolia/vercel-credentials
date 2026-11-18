@@ -7,7 +7,15 @@ import {
   CredentialsTimeoutError,
   VercelTokenError,
 } from '../src/index.js';
-import { credentialsResponse, errorResponse, jsonResponse, rejection, setup, START_MS } from './helpers.js';
+import {
+  credentialsResponse,
+  errorResponse,
+  jsonResponse,
+  rejection,
+  setup,
+  START_MS,
+  VercelOidcTokenError,
+} from './helpers.js';
 
 function timeoutError() {
   return new DOMException('The operation was aborted due to timeout', 'TimeoutError');
@@ -255,13 +263,61 @@ describe('Vercel token mint failures', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it('retries a timed out mint', async () => {
-    const { provider, getIntegrationToken, fetch } = setup({ timeoutMs: 5 });
+  it('does not retry a timed out mint', async () => {
+    const { provider, getIntegrationToken, fetch, sleep } = setup({ timeoutMs: 5 });
     getIntegrationToken.mockImplementationOnce(() => new Promise<string>(() => {}));
+
+    const error = await rejection(provider.get());
+
+    expect(error).toBeInstanceOf(CredentialsTimeoutError);
+    expect(error).toMatchObject({ code: 'timeout', retryable: false });
+    expect(getIntegrationToken).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('retries a network mint failure', async () => {
+    const { provider, getIntegrationToken, fetch, sleep } = setup();
+    getIntegrationToken.mockRejectedValueOnce(new TypeError('fetch failed'));
 
     await expect(provider.get()).resolves.toMatchObject({ applicationId: 'APPID123' });
     expect(getIntegrationToken).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sleep.mock.calls).toEqual([[250]]);
+  });
+
+  it('surfaces a network mint failure once retries are exhausted', async () => {
+    const { provider, getIntegrationToken, fetch } = setup();
+    getIntegrationToken.mockRejectedValue(new TypeError('fetch failed'));
+
+    const error = await rejection(provider.get());
+
+    expect(error).toBeInstanceOf(VercelTokenError);
+    expect(error).toMatchObject({ code: 'vercel_token_error', status: undefined, vercelCode: undefined, retryable: true });
+    expect(getIntegrationToken).toHaveBeenCalledTimes(3);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing OIDC token without retrying it', async () => {
+    const { provider, getIntegrationToken, fetch, sleep } = setup();
+    getIntegrationToken.mockRejectedValue(
+      new VercelOidcTokenError('The OIDC token is missing', new TypeError('ENOENT .vercel/project.json')),
+    );
+
+    const error = await rejection(provider.get());
+
+    expect(error).toBeInstanceOf(VercelTokenError);
+    expect(error).toMatchObject({
+      code: 'vercel_token_error',
+      status: undefined,
+      vercelCode: 'oidc_token_unavailable',
+      retryable: false,
+      message: 'Unable to obtain a Vercel resource token',
+    });
+    expect((error as { cause?: unknown }).cause).toBeUndefined();
+    expect(getIntegrationToken).toHaveBeenCalledTimes(1);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it('times out an attempt whose mint used up its budget, then retries', async () => {
@@ -276,7 +332,7 @@ describe('Vercel token mint failures', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('wraps an arbitrary error without status or code', async () => {
+  it('wraps an arbitrary error without status or code and does not retry it', async () => {
     const { provider, getIntegrationToken } = setup();
     getIntegrationToken.mockRejectedValue(new Error('The OIDC token is missing'));
 
@@ -284,7 +340,9 @@ describe('Vercel token mint failures', () => {
       code: 'vercel_token_error',
       status: undefined,
       vercelCode: undefined,
+      retryable: false,
     });
+    expect(getIntegrationToken).toHaveBeenCalledTimes(1);
   });
 
   it('rejects an empty token', async () => {

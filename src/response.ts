@@ -6,6 +6,10 @@ import {
 } from './errors.js';
 import type { AlgoliaCredentials } from './types.js';
 
+const MAX_CREDENTIAL_LIFETIME_MS = 3_600_000;
+const INSPECT_CUSTOM = Symbol.for('nodejs.util.inspect.custom');
+const REDACTED = '[redacted]';
+
 export function parseCredentials(body: string, nowMs: number): AlgoliaCredentials {
   const data = parseJson(body);
   if (!isRecord(data)) throw new InvalidCredentialsResponseError('Credentials response is not a JSON object');
@@ -14,10 +18,20 @@ export function parseCredentials(body: string, nowMs: number): AlgoliaCredential
     writeApiKey: requiredString(data, 'writeApiKey'),
     validUntil: requiredTimestamp(data, 'validUntil'),
   };
-  if (credentials.validUntil * 1000 <= nowMs) {
-    throw new InvalidCredentialsResponseError('Credentials response is already expired');
+  assertLifetime(credentials.validUntil * 1000 - nowMs);
+  return withRedaction(credentials);
+}
+
+function assertLifetime(lifetimeMs: number): void {
+  if (lifetimeMs <= 0) throw new InvalidCredentialsResponseError('Credentials response is already expired');
+  if (lifetimeMs > MAX_CREDENTIAL_LIFETIME_MS) {
+    throw new InvalidCredentialsResponseError('Credentials response is valid for more than one hour');
   }
-  return Object.freeze(credentials);
+}
+
+function withRedaction(credentials: AlgoliaCredentials): AlgoliaCredentials {
+  const safeView = () => ({ applicationId: credentials.applicationId, validUntil: credentials.validUntil, writeApiKey: REDACTED });
+  return Object.freeze(Object.defineProperties(credentials, { toJSON: { value: safeView }, [INSPECT_CUSTOM]: { value: safeView } }));
 }
 
 export function httpError(status: number, body: string, retryAfter: string | null, nowMs: number): CredentialsHttpError {

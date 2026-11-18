@@ -10,7 +10,7 @@ The provider mints a Vercel resource token with `@vercel/integrations`, exchange
 npm install @algolia/vercel-credentials
 ```
 
-Requires Node.js 20 or later. ESM only.
+Requires Node.js 20 or later. ESM only. Node.js runtime only, not the Edge runtime.
 
 ## Vercel Marketplace setup
 
@@ -69,9 +69,9 @@ ALGOLIA_VERCEL_CREDENTIALS_URL=https://<tunnel-host>/api/1/vercel/credentials
 | --- | --- | --- |
 | `resource` | required | Vercel resource ID matching `^(store\|ir)_[A-Za-z0-9]+$`. |
 | `refreshMarginSeconds` | `30` | Renew this many seconds before `validUntil`. Capped at half the credential lifetime. |
-| `timeoutMs` | `10000` | Timeout of each attempt, Vercel token mint and exchange together. |
+| `timeoutMs` | `10000` | Timeout of each attempt, Vercel token mint and exchange together. At most `2147483647`. |
 | `maxRetries` | `2` | Retries of a transient mint or exchange failure. |
-| `getIntegrationToken`, `fetch`, `now`, `sleep` | built-ins | Replacements for tests. |
+| `getIntegrationToken`, `fetch`, `now`, `sleep` | built-ins | Replacements for tests, not covered by semver. |
 
 Invalid options, or an invalid `ALGOLIA_VERCEL_CREDENTIALS_URL`, throw `CredentialsConfigurationError` when the provider is created.
 
@@ -82,30 +82,36 @@ Every error extends `AlgoliaCredentialsError` and exposes `code`, `status` (when
 | Class | `code` | `status` | `retryable` | Meaning |
 | --- | --- | --- | --- | --- |
 | `CredentialsConfigurationError` | `invalid_configuration` | | no | Invalid provider options or `ALGOLIA_VERCEL_CREDENTIALS_URL`. |
-| `VercelTokenError` | `vercel_token_error` | Vercel status | 429/502/503/504 | `getIntegrationToken` failed. `vercelCode` holds Vercel's error code. |
+| `VercelTokenError` | `vercel_token_error` | Vercel status | 429/502/503/504, network failure | `getIntegrationToken` failed. `vercelCode` holds Vercel's error code, or `oidc_token_unavailable` when the Vercel OIDC token is missing. |
 | `CredentialsHttpError` | `unauthorized` | 401 | no | Vercel resource token is invalid or expired. |
 | `CredentialsHttpError` | `not_found` | 404 | no | Resource is not accessible or the exchange is unavailable. |
 | `CredentialsHttpError` | `conflict` | 409 | no | Resource is not ready. |
 | `CredentialsHttpError` | `service_unavailable` | 503 | yes | Exchange temporarily unavailable. |
 | `CredentialsHttpError` | `internal_error` | 500 | no | Exchange failed. |
 | `CredentialsHttpError` | `http_error` | any other, none for an opaque redirect | 429/502/503/504 | Unexpected status, redirect or unknown backend code. |
-| `InvalidCredentialsResponseError` | `invalid_response` | | no | Malformed or expired credentials. |
-| `CredentialsTimeoutError` | `timeout` | | yes | An attempt or the whole call ran out of time. |
+| `InvalidCredentialsResponseError` | `invalid_response` | | no | Malformed or expired credentials, or valid for more than one hour. |
+| `CredentialsTimeoutError` | `timeout` | | yes, except a mint timeout | An attempt or the whole call ran out of time. |
 | `CredentialsNetworkError` | `network_error` | | yes | The request failed before a response. |
 
 `retryable: yes` errors are surfaced only after the provider's own retries are exhausted.
 
 ## Expiry and caching
 
-- `validUntil` is a Unix timestamp in seconds, at most five minutes after issuance.
+- `validUntil` is a Unix timestamp in seconds, at most five minutes after issuance. Credentials valid for more than one hour are rejected with `InvalidCredentialsResponseError`.
 - Credentials are cached in memory per provider instance. Two providers never share credentials.
 - Cached credentials are reused while `validUntil` is later than now plus the refresh margin.
 - Concurrent `get()` calls share one refresh. A failed refresh rejects every waiting call, and the next call starts a new one.
 - Expired credentials, or credentials inside the refresh margin, are never returned, even when renewal fails.
 - Each attempt mints the Vercel token, then exchanges it, within `timeoutMs`.
-- Transient failures (network errors, timeouts, 429, 502, 503, 504) are retried with a short backoff, whether they come from the Vercel token mint or the exchange. `Retry-After` is honored up to 5 seconds. Each `get()` has an overall deadline.
-- 400, 401, 403, 404, 409, 500, redirects and invalid responses are not retried. Neither is a mint failure without a transient status.
-- The Vercel token is cached by `@vercel/integrations`, so minting it again on a retry is cheap. This package adds no second token cache.
+- Retried with a short backoff, up to `maxRetries` times:
+  - a mint failure with Vercel status 429, 502, 503 or 504, or a network failure without a status;
+  - an exchange network error, timeout, 429, 502, 503 or 504. `Retry-After` is honored up to 5 seconds.
+- Never retried:
+  - a missing Vercel OIDC token (`oidc_token_unavailable`), any other mint failure, or an empty token;
+  - a mint timeout: `@vercel/integrations` shares its in-flight mint request, so a retry would only wait on the same call;
+  - exchange 400, 401, 403, 404, 409, 500, redirects and invalid responses.
+- A `get()` takes at most `timeoutMs * (maxRetries + 1) + 5000 * maxRetries` milliseconds, its overall deadline: 40 seconds with the defaults.
+- `@vercel/integrations` caches the Vercel token and drops a failed mint, so a retry after a failure mints again. This package adds no second token cache.
 
 ## Security
 
@@ -114,6 +120,7 @@ Every error extends `AlgoliaCredentialsError` and exposes `code`, `status` (when
 - Errors never contain the Vercel token, the write key, the override URL, request headers or response bodies. Only known backend error codes are surfaced.
 - Anyone who can set `ALGOLIA_VERCEL_CREDENTIALS_URL` receives the Vercel resource token. Never set it from untrusted input.
 - The package never logs.
+- `JSON.stringify`, `util.inspect` and `console.log` print the returned `writeApiKey` as `[redacted]`. A copy made with spread or `Object.assign` is not redacted.
 - Credentials are kept in memory only, never written to disk.
 
 ## Release

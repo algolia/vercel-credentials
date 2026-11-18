@@ -1,8 +1,8 @@
-import { inspect } from 'node:util';
+import { format, inspect } from 'node:util';
 import { IntegrationTokenError } from '@vercel/integrations';
 import { describe, expect, it } from 'vitest';
 import { AlgoliaCredentialsError } from '../src/index.js';
-import { APP_ID, errorResponse, jsonResponse, rejection, setup, START_MS } from './helpers.js';
+import { APP_ID, errorResponse, jsonResponse, rejection, setup, START_MS, VercelOidcTokenError } from './helpers.js';
 
 const SECRET_TOKEN = 'eyJSECRET.vercel-token-7f3a9c';
 const SECRET_KEY = 'SECRET-write-key-0d81e2';
@@ -70,6 +70,12 @@ const scenarios: Record<string, Scenario> = {
       }),
     );
   },
+  'missing OIDC token': ({ getIntegrationToken }) => {
+    getIntegrationToken.mockRejectedValue(new VercelOidcTokenError(SECRET_TOKEN, new Error(SECRET_BODY)));
+  },
+  'network mint failure': ({ getIntegrationToken }) => {
+    getIntegrationToken.mockRejectedValue(new TypeError(`fetch failed: Bearer ${SECRET_TOKEN}`, { cause: SECRET_BODY }));
+  },
 };
 
 describe('secret leakage', () => {
@@ -95,5 +101,42 @@ describe('secret leakage', () => {
     const [url, init] = context.fetch.mock.calls[0]!;
     expect(url).not.toContain(SECRET_TOKEN);
     expect(init.headers).toMatchObject({ Authorization: `Bearer ${SECRET_TOKEN}` });
+  });
+});
+
+describe('returned credentials', () => {
+  const validUntil = START_MS / 1000 + 300;
+
+  async function secretCredentials() {
+    const { provider, fetch } = setup();
+    fetch.mockImplementation(async () => jsonResponse({ applicationId: APP_ID, writeApiKey: SECRET_KEY, validUntil }));
+    return provider.get();
+  }
+
+  it('redacts writeApiKey when serialized or inspected', async () => {
+    const credentials = await secretCredentials();
+    const safeView = { applicationId: APP_ID, validUntil, writeApiKey: '[redacted]' };
+
+    expect(JSON.parse(JSON.stringify(credentials))).toEqual(safeView);
+    expect(JSON.parse(JSON.stringify({ credentials }))).toEqual({ credentials: safeView });
+    const printed = [
+      inspect(credentials),
+      inspect(credentials, { showHidden: true, depth: 10 }),
+      format(credentials),
+      format('%o %O %j', credentials, credentials, credentials),
+    ];
+    for (const text of printed) {
+      expect(text).toContain('[redacted]');
+      expect(text).not.toContain(SECRET_KEY);
+    }
+  });
+
+  it('keeps the key readable by destructuring', async () => {
+    const credentials = await secretCredentials();
+    const { applicationId, writeApiKey, validUntil: expiry } = credentials;
+
+    expect({ applicationId, writeApiKey, validUntil: expiry }).toEqual({ applicationId: APP_ID, writeApiKey: SECRET_KEY, validUntil });
+    expect(Object.keys(credentials)).toEqual(['applicationId', 'writeApiKey', 'validUntil']);
+    expect(Object.isFrozen(credentials)).toBe(true);
   });
 });

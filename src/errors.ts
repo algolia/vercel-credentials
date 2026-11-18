@@ -79,16 +79,19 @@ export class CredentialsConfigurationError extends AlgoliaCredentialsError {
   }
 }
 
-/** `getIntegrationToken` failed. Keeps Vercel's status and code, never its message or metadata. */
+/**
+ * `getIntegrationToken` failed. Keeps Vercel's status and code, never its message, cause or metadata.
+ * `vercelCode` is `oidc_token_unavailable` when the Vercel OIDC token is missing or cannot be refreshed.
+ */
 export class VercelTokenError extends AlgoliaCredentialsError {
   override name = 'VercelTokenError';
   readonly vercelCode: string | undefined;
 
-  constructor(status?: number, vercelCode?: string) {
+  constructor(status?: number, vercelCode?: string, retryable = isTransientStatus(status)) {
     super('Unable to obtain a Vercel resource token', {
       code: 'vercel_token_error',
       status,
-      retryable: isTransientStatus(status),
+      retryable,
     });
     this.vercelCode = vercelCode;
   }
@@ -125,12 +128,15 @@ export class InvalidCredentialsResponseError extends AlgoliaCredentialsError {
   }
 }
 
-/** An attempt or the whole `get()` exceeded its time budget. */
+/**
+ * An attempt or the whole `get()` exceeded its time budget. Not retryable when the Vercel token mint
+ * timed out, since a retry would only wait on the same in-flight mint.
+ */
 export class CredentialsTimeoutError extends AlgoliaCredentialsError {
   override name = 'CredentialsTimeoutError';
 
-  constructor() {
-    super('Credentials request timed out', { code: 'timeout', retryable: true });
+  constructor(retryable = true) {
+    super('Credentials request timed out', { code: 'timeout', retryable });
   }
 }
 

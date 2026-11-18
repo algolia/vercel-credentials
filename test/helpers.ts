@@ -9,6 +9,14 @@ export const APP_ID = 'APPID123';
 export const WRITE_KEY = 'write-api-key';
 export const START_MS = 1_700_000_000_000;
 
+export class VercelOidcTokenError extends Error {
+  override name = 'VercelOidcTokenError';
+
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+  }
+}
+
 export function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,

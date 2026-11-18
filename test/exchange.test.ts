@@ -201,11 +201,19 @@ describe('configuration', () => {
     expect(() => createAlgoliaCredentialsProvider(base)).not.toThrow();
   });
 
+  it('accepts the largest timer delay as timeoutMs', async () => {
+    const { provider } = setup({ timeoutMs: 2_147_483_647 });
+
+    await expect(provider.get()).resolves.toMatchObject({ applicationId: APP_ID });
+  });
+
   it.each<Partial<AlgoliaCredentialsProviderOptions>>([
     { refreshMarginSeconds: -1 },
     { refreshMarginSeconds: Number.NaN },
     { timeoutMs: 0 },
     { timeoutMs: 1.5 },
+    { timeoutMs: 2_147_483_648 },
+    { timeoutMs: Number.MAX_SAFE_INTEGER },
     { maxRetries: -1 },
     { maxRetries: 1.5 },
     { fetch: 'fetch' as never },
@@ -239,6 +247,8 @@ describe('malformed responses', () => {
     ['null validUntil', { applicationId: APP_ID, writeApiKey: WRITE_KEY, validUntil: null }],
     ['expired validUntil', { applicationId: APP_ID, writeApiKey: WRITE_KEY, validUntil: START_MS / 1000 - 1 }],
     ['validUntil equal to now', { applicationId: APP_ID, writeApiKey: WRITE_KEY, validUntil: START_MS / 1000 }],
+    ['validUntil more than one hour away', { applicationId: APP_ID, writeApiKey: WRITE_KEY, validUntil: START_MS / 1000 + 3601 }],
+    ['validUntil far in the future', { applicationId: APP_ID, writeApiKey: WRITE_KEY, validUntil: 32_503_680_000 }],
     ['array body', [APP_ID, WRITE_KEY, validUntil]],
     ['null body', null],
   ])('rejects %s without retrying', async (_name, body) => {
@@ -250,6 +260,13 @@ describe('malformed responses', () => {
     expect(error).toBeInstanceOf(InvalidCredentialsResponseError);
     expect(error).toMatchObject({ code: 'invalid_response', retryable: false });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts credentials valid for exactly one hour', async () => {
+    const { provider, fetch, clock } = setup();
+    fetch.mockImplementation(async () => credentialsResponse(clock.ms, 3600));
+
+    await expect(provider.get()).resolves.toMatchObject({ validUntil: START_MS / 1000 + 3600 });
   });
 
   it('rejects a non-finite validUntil', async () => {

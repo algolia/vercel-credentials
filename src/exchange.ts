@@ -21,8 +21,9 @@ export async function exchangeToken(config: ProviderConfig, token: string, timeo
 }
 
 async function postToken(config: ProviderConfig, token: string, timeoutMs: number): Promise<ExchangeReply> {
-  const signal = AbortSignal.timeout(timeoutMs);
+  let signal: AbortSignal | undefined;
   try {
+    signal = AbortSignal.timeout(timeoutMs);
     const response = await config.fetch(config.exchangeUrl, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
@@ -46,8 +47,8 @@ function redirectReply(response: Response): ExchangeReply {
   return { redirect: true, status: isRedirectStatus(response.status) ? response.status : undefined };
 }
 
-function transportError(error: unknown, signal: AbortSignal): AlgoliaCredentialsError {
-  return signal.aborted || isTimeoutError(error) ? new CredentialsTimeoutError() : new CredentialsNetworkError();
+function transportError(error: unknown, signal: AbortSignal | undefined): AlgoliaCredentialsError {
+  return signal?.aborted || isTimeoutError(error) ? new CredentialsTimeoutError() : new CredentialsNetworkError();
 }
 
 function isTimeoutError(error: unknown): boolean {
