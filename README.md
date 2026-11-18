@@ -95,6 +95,15 @@ Every error extends `AlgoliaCredentialsError` and exposes `code`, `status` (when
 
 `retryable: yes` errors are surfaced only after the provider's own retries are exhausted.
 
+## Troubleshooting
+
+| Error | Meaning and fix |
+| --- | --- |
+| `VercelTokenError` with `vercelCode: 'oidc_token_unavailable'` | No Vercel OIDC token is available. Locally, run `vercel link` then `vercel env pull`. On Vercel, check that the deployment has OIDC enabled. |
+| `VercelTokenError` with `vercelCode: 'not_found'` | The resource is not connected to this project for the current environment. Connect it from the resource page. |
+| `CredentialsHttpError` with `code: 'unauthorized'`, `status: 401` | The exchange rejected the Vercel resource token. |
+| `CredentialsHttpError` with `status: 404` | The resource is not OIDC-enabled, or the exchange is not enabled. |
+
 ## Expiry and caching
 
 - `validUntil` is a Unix timestamp in seconds, at most five minutes after issuance. Credentials valid for more than one hour are rejected with `InvalidCredentialsResponseError`.
