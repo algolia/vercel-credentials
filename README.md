@@ -125,8 +125,15 @@ Every error extends `AlgoliaCredentialsError` and exposes `code`, `status` (when
 
 ## Release
 
+First release, `0.1.0` is already the version in `package.json`:
+
+1. Check that `CHANGELOG.md` has the `0.1.0` entry on `main`.
+2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+
+Later releases:
+
 1. Commit the new version's entry in `CHANGELOG.md` on `main`.
 2. Bump the version: `npm version <patch|minor|major>`.
 3. Push the commit and tag: `git push --follow-tags`.
 
-The `Publish` workflow publishes the tagged version to npm with provenance, through npm trusted publishing.
+The `Publish` workflow checks that the tagged commit is on `main` and matches the `package.json` version, builds and tests the package, then publishes the tarball to npm with provenance through npm trusted publishing, from the `npm` environment.
