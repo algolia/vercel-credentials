@@ -1,0 +1,125 @@
+# @algolia/vercel-credentials
+
+Short-lived Algolia write credentials for a Vercel Marketplace resource. Server-side only.
+
+The provider mints a Vercel resource token with `@vercel/integrations`, exchanges it for an Algolia application ID and write API key valid for at most five minutes, caches them in memory and renews them before they expire.
+
+## Install
+
+```sh
+npm install @algolia/vercel-credentials
+```
+
+Requires Node.js 20 or later. ESM only.
+
+## Vercel Marketplace setup
+
+1. Install the Algolia integration from the Vercel Marketplace and create a resource.
+2. Connect the resource to your project for every environment that writes to Algolia, including `development`.
+3. Copy the resource ID (`store_…` or `ir_…`) from the resource page.
+4. For local development, link the project and pull its environment so `@vercel/integrations` can read the OIDC token:
+
+   ```sh
+   vercel link
+   vercel env pull
+   ```
+
+   Re-run `vercel env pull` when the local OIDC token expires (about 12 hours).
+
+## Usage
+
+```ts
+import { algoliasearch } from 'algoliasearch';
+import { createAlgoliaCredentialsProvider } from '@algolia/vercel-credentials';
+
+const credentials = createAlgoliaCredentialsProvider({
+  resource: 'store_abc123',
+});
+
+export async function saveProduct(product: Record<string, unknown>) {
+  const { applicationId, writeApiKey } = await credentials.get();
+  const client = algoliasearch(applicationId, writeApiKey);
+  return client.saveObject({ indexName: 'products', body: product });
+}
+```
+
+- Call `get()` before each write operation. It returns cached credentials until they are about to expire.
+- Create the Algolia client from the returned credentials, or recreate it when `writeApiKey` changes. Never keep a client built from an expired key.
+- Create one provider per resource at module scope so its cache is reused across requests.
+- The returned `applicationId` is the resource's application. If the app also searches with a separate search key, check that it targets the same application.
+- Never import this package in browser code and never send `writeApiKey` to the client. Search keeps using a search-only API key.
+
+## Endpoint
+
+The provider calls `https://dashboard.algolia.com/api/1/vercel/credentials`.
+
+For development or staging, set `ALGOLIA_VERCEL_CREDENTIALS_URL` to another exchange URL, such as a tunnel to a local dashboard:
+
+```sh
+ALGOLIA_VERCEL_CREDENTIALS_URL=https://<tunnel-host>/api/1/vercel/credentials
+```
+
+- Use an `https:` URL without username or password. Anything else throws `CredentialsConfigurationError` when the provider is created.
+- Leave it unset or empty in production.
+- The variable is read when the provider is created. Restart the process after changing it.
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `resource` | required | Vercel resource ID matching `^(store\|ir)_[A-Za-z0-9]+$`. |
+| `refreshMarginSeconds` | `30` | Renew this many seconds before `validUntil`. Capped at half the credential lifetime. |
+| `timeoutMs` | `10000` | Timeout of each attempt, Vercel token mint and exchange together. |
+| `maxRetries` | `2` | Retries of a transient mint or exchange failure. |
+| `getIntegrationToken`, `fetch`, `now`, `sleep` | built-ins | Replacements for tests. |
+
+Invalid options, or an invalid `ALGOLIA_VERCEL_CREDENTIALS_URL`, throw `CredentialsConfigurationError` when the provider is created.
+
+## Errors
+
+Every error extends `AlgoliaCredentialsError` and exposes `code`, `status` (when an HTTP status is known) and `retryable`.
+
+| Class | `code` | `status` | `retryable` | Meaning |
+| --- | --- | --- | --- | --- |
+| `CredentialsConfigurationError` | `invalid_configuration` | | no | Invalid provider options or `ALGOLIA_VERCEL_CREDENTIALS_URL`. |
+| `VercelTokenError` | `vercel_token_error` | Vercel status | 429/502/503/504 | `getIntegrationToken` failed. `vercelCode` holds Vercel's error code. |
+| `CredentialsHttpError` | `unauthorized` | 401 | no | Vercel resource token is invalid or expired. |
+| `CredentialsHttpError` | `not_found` | 404 | no | Resource is not accessible or the exchange is unavailable. |
+| `CredentialsHttpError` | `conflict` | 409 | no | Resource is not ready. |
+| `CredentialsHttpError` | `service_unavailable` | 503 | yes | Exchange temporarily unavailable. |
+| `CredentialsHttpError` | `internal_error` | 500 | no | Exchange failed. |
+| `CredentialsHttpError` | `http_error` | any other, none for an opaque redirect | 429/502/503/504 | Unexpected status, redirect or unknown backend code. |
+| `InvalidCredentialsResponseError` | `invalid_response` | | no | Malformed or expired credentials. |
+| `CredentialsTimeoutError` | `timeout` | | yes | An attempt or the whole call ran out of time. |
+| `CredentialsNetworkError` | `network_error` | | yes | The request failed before a response. |
+
+`retryable: yes` errors are surfaced only after the provider's own retries are exhausted.
+
+## Expiry and caching
+
+- `validUntil` is a Unix timestamp in seconds, at most five minutes after issuance.
+- Credentials are cached in memory per provider instance. Two providers never share credentials.
+- Cached credentials are reused while `validUntil` is later than now plus the refresh margin.
+- Concurrent `get()` calls share one refresh. A failed refresh rejects every waiting call, and the next call starts a new one.
+- Expired credentials, or credentials inside the refresh margin, are never returned, even when renewal fails.
+- Each attempt mints the Vercel token, then exchanges it, within `timeoutMs`.
+- Transient failures (network errors, timeouts, 429, 502, 503, 504) are retried with a short backoff, whether they come from the Vercel token mint or the exchange. `Retry-After` is honored up to 5 seconds. Each `get()` has an overall deadline.
+- 400, 401, 403, 404, 409, 500, redirects and invalid responses are not retried. Neither is a mint failure without a transient status.
+- The Vercel token is cached by `@vercel/integrations`, so minting it again on a retry is cheap. This package adds no second token cache.
+
+## Security
+
+- Use on the server only: Vercel Functions, route handlers, server actions, scripts.
+- The exchange uses `POST` with `Authorization: Bearer <token>` and requires HTTPS, including for `ALGOLIA_VERCEL_CREDENTIALS_URL`. Redirects are never followed: any 3xx fails with `http_error`, without retry and without exposing the `Location` header.
+- Errors never contain the Vercel token, the write key, the override URL, request headers or response bodies. Only known backend error codes are surfaced.
+- Anyone who can set `ALGOLIA_VERCEL_CREDENTIALS_URL` receives the Vercel resource token. Never set it from untrusted input.
+- The package never logs.
+- Credentials are kept in memory only, never written to disk.
+
+## Release
+
+1. Commit the new version's entry in `CHANGELOG.md` on `main`.
+2. Bump the version: `npm version <patch|minor|major>`.
+3. Push the commit and tag: `git push --follow-tags`.
+
+The `Publish` workflow publishes the tagged version to npm with provenance, through npm trusted publishing.

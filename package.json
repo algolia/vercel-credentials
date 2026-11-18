@@ -1,0 +1,60 @@
+{
+  "name": "@algolia/vercel-credentials",
+  "version": "0.1.0",
+  "description": "Short-lived Algolia write credentials for Vercel Marketplace resources",
+  "keywords": [
+    "algolia",
+    "vercel",
+    "oidc",
+    "marketplace"
+  ],
+  "homepage": "https://github.com/algolia/vercel-credentials#readme",
+  "bugs": {
+    "url": "https://github.com/algolia/vercel-credentials/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/algolia/vercel-credentials.git"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Algolia, Inc.",
+    "url": "https://github.com/algolia"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@vercel/integrations": "^0.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}
